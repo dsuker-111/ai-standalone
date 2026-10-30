@@ -625,3 +625,161 @@ html,body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:v
   .ai-bar { flex-wrap: wrap; }
   .ai-select { max-width: 190px; }
 }
+
+/* ===== 历史记录侧边栏 ===== */
+.ai-history-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(2,6,23,0.35);
+}
+
+.ai-history-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: #fff;
+  box-shadow: -8px 0 32px rgba(2,6,23,0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: 121;
+  animation: slideInRight .22s ease-out;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.ai-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.ai-history-head h2 {
+  font-size: 16px;
+}
+
+.ai-history-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.ai-history-status {
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 13px;
+  padding: 40px 0;
+}
+
+.ai-history-group {
+  margin-bottom: 4px;
+}
+
+.ai-history-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background .15s;
+  color: var(--text);
+}
+
+.ai-history-group-head:hover {
+  background: #f1f5f9;
+}
+
+.ai-history-group-icon {
+  font-size: 10px;
+  color: var(--text-soft);
+  width: 12px;
+  text-align: center;
+  flex: none;
+}
+
+.ai-history-group-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-history-group-badge {
+  margin-left: auto;
+  background: var(--bg);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  color: var(--text-soft);
+}
+
+.ai-history-group-body {
+  padding: 2px 0 6px 24px;
+}
+
+.ai-history-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  transition: background .12s;
+}
+
+.ai-history-msg:hover {
+  background: #f8fafc;
+}
+
+.ai-history-msg .ai-history-role {
+  flex: none;
+  font-size: 13px;
+  margin-top: 1px;
+}
+
+.ai-history-msg .ai-history-text {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-history-msg .ai-history-model {
+  font-size: 10px;
+  color: var(--text-soft);
+  background: var(--bg);
+  padding: 0 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex: none;
+}
+
+.ai-history-msg.ai .ai-history-text {
+  color: var(--text-soft);
+}
+
+.ai-history-foot {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.ai-history-foot .ai-btn {
+  flex: 1;
+}

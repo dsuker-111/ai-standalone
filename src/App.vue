@@ -72,6 +72,63 @@ const MEETING_KEY = 'ai_meeting_on'
 const MSGS_KEY = 'ai_chat_messages'
 const MAX_MSGS = 200  // 最多保留 200 条消息
 
+// 历史记录侧边栏
+const historyOpen = ref(false)
+const historyItems = ref([])
+const historyLoading = ref(false)
+const historyExpanded = ref({})
+
+function toggleHistory() {
+  historyOpen.value = !historyOpen.value
+  if (historyOpen.value) fetchHistory()
+}
+
+async function fetchHistory() {
+  historyLoading.value = true
+  try {
+    const raw = await loadChatHistory(500)
+    // 按日期分组
+    const groups = {}
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const yesterday = today - 86400000
+    const weekAgo = today - 7 * 86400000
+
+    for (const m of raw) {
+      const ts = m.created_at ? new Date(m.created_at).getTime() : today
+      let key
+      if (ts >= today) key = '今天'
+      else if (ts >= yesterday) key = '昨天'
+      else if (ts >= weekAgo) key = '本周内'
+      else {
+        const d = new Date(ts)
+        key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      }
+      if (!groups[key]) groups[key] = []
+      groups[key].push(m)
+    }
+
+    historyItems.value = Object.entries(groups).map(([label, msgs]) => ({ label, count: msgs.length, msgs }))
+  } catch { historyItems.value = [] }
+  finally { historyLoading.value = false }
+}
+
+function toggleGroup(label) {
+  historyExpanded.value = { ...historyExpanded.value, [label]: !historyExpanded.value[label] }
+}
+
+function goToMessage(idx) {
+  // 尝试在当前会话中滚动到该消息
+  historyOpen.value = false
+  nextTick(() => {
+    const el = msgList.value
+    if (el) {
+      const children = el.querySelectorAll('.ai-msg')
+      if (children[idx]) children[idx].scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  })
+}
+
 // 会议记录开关
 const meetingOn = ref(false)
 try {
@@ -348,8 +405,9 @@ onMounted(async () => {
     <!-- 聊天主界面 -->
     <template v-else>
     <header class="ai-top">
-      <span class="ai-logo">🤖 AI 助手</span>
+      <span class="ai-logo" @click="historyOpen = !historyOpen">🤖 AI 助手</span>
       <div class="ai-top-right">
+        <button class="ai-btn ghost" type="button" @click="toggleHistory" title="浏览历史记录">📜 历史</button>
         <span class="ai-user-mail">{{ authEmail }}</span>
         <button class="ai-btn ghost" type="button" @click="doLogout">退出</button>
         <div class="ai-version">v{{ __APP_VERSION__ }}</div>
@@ -540,5 +598,49 @@ onMounted(async () => {
       </div>
     </div>
     </template>
+
+    <!-- 历史记录侧边栏 -->
+    <div v-if="historyOpen" class="ai-history-mask" @click.self="historyOpen = false">
+      <aside class="ai-history-panel">
+        <header class="ai-history-head">
+          <h2>📜 对话历史</h2>
+          <button class="cm-close" @click="historyOpen = false">✕</button>
+        </header>
+
+        <div class="ai-history-body">
+          <div v-if="historyLoading" class="ai-history-status">加载中…</div>
+          <div v-else-if="!historyItems.length" class="ai-history-status">暂无历史记录</div>
+          <template v-else>
+            <div v-for="group in historyItems" :key="group.label" class="ai-history-group">
+              <button
+                class="ai-history-group-head"
+                @click="toggleGroup(group.label)"
+              >
+                <span class="ai-history-group-icon">{{ historyExpanded[group.label] ? '▾' : '▸' }}</span>
+                <span class="ai-history-group-label">{{ group.label }}</span>
+                <span class="ai-history-group-badge">{{ group.count }}</span>
+              </button>
+              <div v-if="historyExpanded[group.label]" class="ai-history-group-body">
+                <div
+                  v-for="(m, i) in group.msgs"
+                  :key="i"
+                  class="ai-history-msg"
+                  :class="m.role"
+                >
+                  <span class="ai-history-role">{{ m.role === 'user' ? '👤' : '🤖' }}</span>
+                  <span class="ai-history-text">{{ m.content.slice(0, 60) }}{{ m.content.length > 60 ? '…' : '' }}</span>
+                  <span v-if="m.model" class="ai-history-model">{{ m.model }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <footer class="ai-history-foot">
+          <button class="ai-btn" type="button" @click="fetchHistory">🔄 刷新</button>
+          <button class="ai-btn danger ghost" type="button" @click="clearMessages(); fetchHistory();">🗑 清空全部</button>
+        </footer>
+      </aside>
+    </div>
   </div>
 </template>
