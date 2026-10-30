@@ -380,7 +380,7 @@ onMounted(async () => {
       <div class="ai-login-card">
         <div class="ai-login-brand">
           <span class="ai-login-logo">🤖</span>
-          <h1>AI 助手</h1>
+          <h1>AI助手</h1>
           <p>登录以使用 AI 对话</p>
         </div>
 
@@ -405,7 +405,7 @@ onMounted(async () => {
     <!-- 聊天主界面 -->
     <template v-else>
     <header class="ai-top">
-      <span class="ai-logo" @click="historyOpen = !historyOpen">🤖 AI 助手</span>
+      <span class="ai-logo" @click="historyOpen = !historyOpen">🤖 AI助手</span>
       <div class="ai-top-right">
         <button class="ai-btn ghost" type="button" @click="toggleHistory" title="浏览历史记录">📜 历史</button>
         <span class="ai-user-mail">{{ authEmail }}</span>
