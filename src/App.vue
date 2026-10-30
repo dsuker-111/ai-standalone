@@ -4,7 +4,49 @@ import { checkHealth, chat as doChat } from './api/model'
 import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
 import { MEETING_NOTES } from './data/meeting'
 
-import { supabase, currentUserId, signIn, signUp, signOut, isLoggedIn } from './api/supabase'
+// ====== 独立口令登录 ======
+const PASS_KEY = 'ai_room_pass'
+const unlocked = ref(false)
+const passMode = ref('enter')   // 'set'（首次设密码）| 'enter'（输入密码）
+const passInput = ref('')
+const passError = ref('')
+
+function loadPass() {
+  try { return localStorage.getItem(PASS_KEY) || '' } catch { return '' }
+}
+
+function checkPass() {
+  const saved = loadPass()
+  if (!saved) {
+    passMode.value = 'set'
+    return
+  }
+  passMode.value = 'enter'
+}
+
+function doSetPass() {
+  const v = passInput.value.trim()
+  if (!v) { passError.value = '密码不能为空'; return }
+  try { localStorage.setItem(PASS_KEY, v) } catch {}
+  unlocked.value = true
+}
+
+function doEnter() {
+  const saved = loadPass()
+  if (passInput.value.trim() === saved) {
+    unlocked.value = true
+    passError.value = ''
+  } else {
+    passError.value = '密码错误'
+  }
+}
+
+function doLock() {
+  unlocked.value = false
+  passInput.value = ''
+  passError.value = ''
+  checkPass()
+}
 
 // ====== 状态 ======
 const busy = ref(false)
@@ -12,47 +54,6 @@ const input = ref('')
 const messages = ref([])
 const error = ref('')
 const online = ref(false)
-
-// ====== 登录态 ======
-const authUser = ref(null)
-const authLoading = ref(true)
-const authTab = ref('login') // 'login' | 'register'
-const authForm = ref({ email: '', password: '' })
-const authError = ref('')
-
-async function checkAuth() {
-  const loggedIn = await isLoggedIn()
-  if (!loggedIn) { authUser.value = null; authLoading.value = false; return }
-  const { data } = await supabase.auth.getSession()
-  authUser.value = data.session ? { id: data.session.user.id, email: data.session.user.email } : null
-  authLoading.value = false
-}
-
-async function doLogin() {
-  authError.value = ''
-  try {
-    await signIn(authForm.value.email.trim(), authForm.value.password)
-    await checkAuth()
-  } catch (e) {
-    authError.value = (e && (e.message || e.code)) || '登录失败'
-  }
-}
-
-async function doRegister() {
-  authError.value = ''
-  try {
-    await signUp(authForm.value.email.trim(), authForm.value.password)
-    await checkAuth()
-  } catch (e) {
-    authError.value = (e && (e.message || e.code)) || '注册失败'
-  }
-}
-
-async function doLogout() {
-  await signOut()
-  authUser.value = null
-  messages.value = []
-}
 
 const cloudModels = ref([])
 const localModels = ref([])
@@ -176,13 +177,9 @@ async function send() {
   input.value = ''
   autoResize()
   scrollBottom()
-  // 写 Supabase
-  const uid = await currentUserId()
-  if (uid) { try { await supabase.from('chat_history').insert({ user_id: uid, role: 'user', content: text }) } catch {} }
   try {
     const res = await doChat(promptText, { model: currentModel.value, history: recentHistory() })
     messages.value.push({ role: 'ai', content: res.answer, model: res.model })
-    if (uid) { try { await supabase.from('chat_history').insert({ user_id: uid, role: 'ai', content: res.answer, model: res.model || '' }) } catch {} }
   } catch (e) {
     error.value = e.message || String(e)
     messages.value.push({ role: 'ai', content: '❌ ' + error.value, error: true })
@@ -276,8 +273,11 @@ function delCustom(model) {
 
 // ====== 启动 ======
 onMounted(async () => {
-  await checkAuth()
-  if (!authUser.value) { authLoading.value = false; return }
+  checkPass()
+
+  // 等待解锁
+  if (!loadPass()) return   // 还没设密码：等用户设
+  if (!unlocked.value) return // 锁着：等输密码
 
   loadMessages()
 
@@ -299,32 +299,30 @@ onMounted(async () => {
 
 <template>
   <div class="ai-app">
-    <!-- 登录/注册屏 -->
-    <div v-if="authLoading" class="ai-login-load">加载中…</div>
-    
-    <div v-else-if="!authUser" class="ai-login-screen">
-      <div class="ai-login-card">
-        <div class="ai-login-brand">
-          <span class="ai-login-logo">🤖</span>
-          <h1>AI 助手</h1>
-          <p>登录后对话同步到云端</p>
-        </div>
+    <!-- 口令锁屏 -->
+    <div v-if="!unlocked" class="ai-lock-screen">
+      <div class="ai-lock-card">
+        <span class="ai-lock-icon">{{ passMode === 'set' ? '🔐' : '🔑' }}</span>
+        <h1>AI 助手</h1>
+        <p v-if="passMode === 'set'">首次使用，请设置一个访问口令</p>
+        <p v-else>请输入口令进入</p>
         
-        <div class="login-tabs">
-          <button :class="{ active: authTab === 'login' }" type="button" @click="authTab = 'login'">登录</button>
-          <button :class="{ active: authTab === 'register' }" type="button" @click="authTab = 'register'">注册</button>
-        </div>
-        
-        <form class="ai-login-form" @submit.prevent="authTab === 'login' ? doLogin() : doRegister()">
-          <input v-model.trim="authForm.email" type="email" placeholder="your@email.com" autofocus autocomplete="email" />
-          <input v-model="authForm.password" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password" />
-          <p v-if="authError" class="ai-login-err">{{ authError }}</p>
-          <button type="submit" :disabled="!authForm.email || authForm.password.length < 6">
-            {{ authTab === 'register' ? '注 册' : '登 录' }}
+        <form class="ai-lock-form" @submit.prevent="passMode === 'set' ? doSetPass() : doEnter()">
+          <input
+            v-model.trim="passInput"
+            type="password"
+            :placeholder="passMode === 'set' ? '设置口令' : '输入口令'"
+            autofocus
+            autocomplete="off"
+            @keydown.enter.prevent="passMode === 'set' ? doSetPass() : doEnter()"
+          />
+          <p v-if="passError" class="ai-lock-err">{{ passError }}</p>
+          <button type="submit" :disabled="!passInput">
+            {{ passMode === 'set' ? '设置并进入' : '进 入' }}
           </button>
         </form>
         
-        <p class="ai-login-hint">与个人主页共享同一账号，数据云端同步</p>
+        <p class="ai-lock-hint">记住这个口令，下次进入需要它。不对任何人透露。</p>
       </div>
     </div>
 
@@ -333,8 +331,7 @@ onMounted(async () => {
     <header class="ai-top">
       <span class="ai-logo">🤖 AI 助手</span>
       <div class="ai-top-right">
-        <span class="ai-user-mail">{{ authUser.email }}</span>
-        <button class="ai-btn ghost" type="button" @click="doLogout">退出</button>
+        <button class="ai-btn ghost" type="button" @click="doLock">🔒 锁定</button>
         <div class="ai-version">v{{ __APP_VERSION__ }}</div>
       </div>
     </header>
