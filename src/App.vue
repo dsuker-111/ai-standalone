@@ -3,7 +3,7 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { checkHealth, chat as doChat } from './api/model'
 import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
 import { MEETING_NOTES } from './data/meeting'
-import { supabase, signIn, signUp, signOut, isLoggedIn, currentUserEmail } from './api/supabase'
+import { supabase, signIn, signUp, signOut, isLoggedIn, currentUserEmail, loadChatHistory, saveChatMessage, clearChatHistory } from './api/supabase'
 
 // ====== Supabase 登录 ======
 const loggedIn = ref(false)
@@ -18,6 +18,7 @@ async function checkAuth() {
   if (ok) {
     loggedIn.value = true
     authEmail.value = (await currentUserEmail()) || ''
+    await loadMessages()
   }
 }
 
@@ -184,12 +185,15 @@ async function send() {
   input.value = ''
   autoResize()
   scrollBottom()
+  saveChatMessage('user', text, '', false)  // 写 Supabase（不等待）
   try {
     const res = await doChat(promptText, { model: currentModel.value, history: recentHistory() })
     messages.value.push({ role: 'ai', content: res.answer, model: res.model })
+    saveChatMessage('ai', res.answer, res.model || '', false)
   } catch (e) {
     error.value = e.message || String(e)
     messages.value.push({ role: 'ai', content: '❌ ' + error.value, error: true })
+    saveChatMessage('ai', '❌ ' + error.value, '', true)
   } finally {
     busy.value = false
     scrollBottom()
@@ -220,15 +224,27 @@ function toggleMeeting() {
   try { localStorage.setItem(MEETING_KEY, meetingOn.value ? '1' : '0') } catch { /* ignore */ }
 }
 
-// ====== 对话持久化 ======
+// ====== 对话持久化（Supabase 跨设备同步 + localStorage 本地缓存） ======
 function saveMessages() {
+  // 本地缓存（离线/快速恢复）
   try {
     const payload = messages.value.slice(-MAX_MSGS)
     localStorage.setItem(MSGS_KEY, JSON.stringify(payload))
   } catch { /* ignore */ }
 }
 
-function loadMessages() {
+async function loadMessages() {
+  // 优先从 Supabase 加载
+  try {
+    const remote = await loadChatHistory(MAX_MSGS)
+    if (remote && remote.length) {
+      messages.value = remote
+      // 同步回本地缓存
+      try { localStorage.setItem(MSGS_KEY, JSON.stringify(remote.slice(-MAX_MSGS))) } catch {}
+      return
+    }
+  } catch { /* ignore */ }
+  // 兜底：本地缓存
   try {
     const raw = localStorage.getItem(MSGS_KEY)
     if (raw) {
@@ -238,9 +254,10 @@ function loadMessages() {
   } catch { /* ignore */ }
 }
 
-function clearMessages() {
+async function clearMessages() {
   messages.value = []
   try { localStorage.removeItem(MSGS_KEY) } catch { /* ignore */ }
+  try { await clearChatHistory() } catch { /* ignore */ }
 }
 
 // ====== 模型管理 ======
@@ -282,8 +299,6 @@ function delCustom(model) {
 onMounted(async () => {
   await checkAuth()
   if (!loggedIn.value) return
-
-  loadMessages()
 
   const h = await checkHealth()
   online.value = h.online

@@ -36,3 +36,43 @@ export async function signUp(email, password) {
 export async function signOut() {
   await supabase.auth.signOut()
 }
+
+// ====== 对话历史（跨设备同步） ======
+
+/** 加载最近 N 条消息 */
+export async function loadChatHistory(limit = 200) {
+  const uid = await currentUserId()
+  if (!uid) return []
+  const { data, error } = await supabase
+    .from('chat_history')
+    .select('role,content,model,error,created_at')
+    .eq('user_id', uid)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+  if (error) return []
+  return (data || []).map((r) => ({ role: r.role === 'ai' ? 'ai' : 'user', content: r.content, model: r.model || '', error: !!r.error }))
+}
+
+/** 保存一条消息 */
+export async function saveChatMessage(role, content, model, isError) {
+  const uid = await currentUserId()
+  if (!uid) return
+  try {
+    await supabase.from('chat_history').insert({
+      user_id: uid,
+      role: role === 'ai' ? 'ai' : 'user',
+      content,
+      model: model || '',
+      error: !!isError
+    })
+  } catch { /* ignore */ }
+}
+
+/** 清空对话 */
+export async function clearChatHistory() {
+  const uid = await currentUserId()
+  if (!uid) return
+  try {
+    await supabase.from('chat_history').delete().eq('user_id', uid)
+  } catch { /* ignore */ }
+}
