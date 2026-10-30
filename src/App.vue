@@ -4,12 +4,55 @@ import { checkHealth, chat as doChat } from './api/model'
 import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
 import { MEETING_NOTES } from './data/meeting'
 
+import { supabase, currentUserId, signIn, signUp, signOut, isLoggedIn } from './api/supabase'
+
 // ====== 状态 ======
 const busy = ref(false)
 const input = ref('')
 const messages = ref([])
 const error = ref('')
 const online = ref(false)
+
+// ====== 登录态 ======
+const authUser = ref(null)
+const authLoading = ref(true)
+const authTab = ref('login') // 'login' | 'register'
+const authForm = ref({ email: '', password: '' })
+const authError = ref('')
+
+async function checkAuth() {
+  const loggedIn = await isLoggedIn()
+  if (!loggedIn) { authUser.value = null; authLoading.value = false; return }
+  const { data } = await supabase.auth.getSession()
+  authUser.value = data.session ? { id: data.session.user.id, email: data.session.user.email } : null
+  authLoading.value = false
+}
+
+async function doLogin() {
+  authError.value = ''
+  try {
+    await signIn(authForm.value.email.trim(), authForm.value.password)
+    await checkAuth()
+  } catch (e) {
+    authError.value = (e && (e.message || e.code)) || '登录失败'
+  }
+}
+
+async function doRegister() {
+  authError.value = ''
+  try {
+    await signUp(authForm.value.email.trim(), authForm.value.password)
+    await checkAuth()
+  } catch (e) {
+    authError.value = (e && (e.message || e.code)) || '注册失败'
+  }
+}
+
+async function doLogout() {
+  await signOut()
+  authUser.value = null
+  messages.value = []
+}
 
 const cloudModels = ref([])
 const localModels = ref([])
@@ -133,9 +176,13 @@ async function send() {
   input.value = ''
   autoResize()
   scrollBottom()
+  // 写 Supabase
+  const uid = await currentUserId()
+  if (uid) { try { await supabase.from('chat_history').insert({ user_id: uid, role: 'user', content: text }) } catch {} }
   try {
     const res = await doChat(promptText, { model: currentModel.value, history: recentHistory() })
     messages.value.push({ role: 'ai', content: res.answer, model: res.model })
+    if (uid) { try { await supabase.from('chat_history').insert({ user_id: uid, role: 'ai', content: res.answer, model: res.model || '' }) } catch {} }
   } catch (e) {
     error.value = e.message || String(e)
     messages.value.push({ role: 'ai', content: '❌ ' + error.value, error: true })
@@ -229,6 +276,9 @@ function delCustom(model) {
 
 // ====== 启动 ======
 onMounted(async () => {
+  await checkAuth()
+  if (!authUser.value) { authLoading.value = false; return }
+
   loadMessages()
 
   const h = await checkHealth()
@@ -249,9 +299,44 @@ onMounted(async () => {
 
 <template>
   <div class="ai-app">
+    <!-- 登录/注册屏 -->
+    <div v-if="authLoading" class="ai-login-load">加载中…</div>
+    
+    <div v-else-if="!authUser" class="ai-login-screen">
+      <div class="ai-login-card">
+        <div class="ai-login-brand">
+          <span class="ai-login-logo">🤖</span>
+          <h1>AI 助手</h1>
+          <p>登录后对话同步到云端</p>
+        </div>
+        
+        <div class="login-tabs">
+          <button :class="{ active: authTab === 'login' }" type="button" @click="authTab = 'login'">登录</button>
+          <button :class="{ active: authTab === 'register' }" type="button" @click="authTab = 'register'">注册</button>
+        </div>
+        
+        <form class="ai-login-form" @submit.prevent="authTab === 'login' ? doLogin() : doRegister()">
+          <input v-model.trim="authForm.email" type="email" placeholder="your@email.com" autofocus autocomplete="email" />
+          <input v-model="authForm.password" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password" />
+          <p v-if="authError" class="ai-login-err">{{ authError }}</p>
+          <button type="submit" :disabled="!authForm.email || authForm.password.length < 6">
+            {{ authTab === 'register' ? '注 册' : '登 录' }}
+          </button>
+        </form>
+        
+        <p class="ai-login-hint">与个人主页共享同一账号，数据云端同步</p>
+      </div>
+    </div>
+
+    <!-- 聊天主界面 -->
+    <template v-else>
     <header class="ai-top">
       <span class="ai-logo">🤖 AI 助手</span>
-      <div class="ai-version">v{{ __APP_VERSION__ }}</div>
+      <div class="ai-top-right">
+        <span class="ai-user-mail">{{ authUser.email }}</span>
+        <button class="ai-btn ghost" type="button" @click="doLogout">退出</button>
+        <div class="ai-version">v{{ __APP_VERSION__ }}</div>
+      </div>
     </header>
 
     <!-- 模型栏 -->
@@ -437,5 +522,6 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
