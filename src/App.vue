@@ -4,48 +4,49 @@ import { checkHealth, chat as doChat } from './api/model'
 import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
 import { MEETING_NOTES } from './data/meeting'
 
-// ====== 独立口令登录 ======
-const PASS_KEY = 'ai_room_pass'
-const unlocked = ref(false)
-const passMode = ref('enter')   // 'set'（首次设密码）| 'enter'（输入密码）
-const passInput = ref('')
-const passError = ref('')
+// ====== 登录 ======
+const USERS_KEY = 'ai_users'
+const SESSION_KEY = 'ai_session'
+const loggedIn = ref(false)
+const loginTab = ref('login')
+const loginForm = ref({ username: '', password: '' })
+const loginError = ref('')
 
-function loadPass() {
-  try { return localStorage.getItem(PASS_KEY) || '' } catch { return '' }
+function loadUsers() {
+  try { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}') } catch { return {} }
+}
+function saveUsers(u) {
+  try { localStorage.setItem(USERS_KEY, JSON.stringify(u)) } catch {}
 }
 
-function checkPass() {
-  const saved = loadPass()
-  if (!saved) {
-    passMode.value = 'set'
+function doLogin() {
+  loginError.value = ''
+  const { username, password } = loginForm.value
+  const users = loadUsers()
+  if (users[username.trim()] !== password) {
+    loginError.value = '用户名或密码错误'
     return
   }
-  passMode.value = 'enter'
+  try { localStorage.setItem(SESSION_KEY, username.trim()) } catch {}
+  loggedIn.value = true
 }
 
-function doSetPass() {
-  const v = passInput.value.trim()
-  if (!v) { passError.value = '密码不能为空'; return }
-  try { localStorage.setItem(PASS_KEY, v) } catch {}
-  unlocked.value = true
+function doRegister() {
+  loginError.value = ''
+  const { username, password } = loginForm.value
+  if (!username.trim() || !password) { loginError.value = '用户名和密码不能为空'; return }
+  const users = loadUsers()
+  if (users[username.trim()]) { loginError.value = '该用户名已存在'; return }
+  users[username.trim()] = password
+  saveUsers(users)
+  try { localStorage.setItem(SESSION_KEY, username.trim()) } catch {}
+  loggedIn.value = true
 }
 
-function doEnter() {
-  const saved = loadPass()
-  if (passInput.value.trim() === saved) {
-    unlocked.value = true
-    passError.value = ''
-  } else {
-    passError.value = '密码错误'
-  }
-}
-
-function doLock() {
-  unlocked.value = false
-  passInput.value = ''
-  passError.value = ''
-  checkPass()
+function doLogout() {
+  try { localStorage.removeItem(SESSION_KEY) } catch {}
+  loggedIn.value = false
+  loginForm.value = { username: '', password: '' }
 }
 
 // ====== 状态 ======
@@ -273,11 +274,16 @@ function delCustom(model) {
 
 // ====== 启动 ======
 onMounted(async () => {
-  checkPass()
+  // 检查是否有上次登录的会话
+  try {
+    const sess = localStorage.getItem(SESSION_KEY)
+    if (sess) {
+      const users = loadUsers()
+      if (users[sess]) loggedIn.value = true
+    }
+  } catch {}
 
-  // 等待解锁
-  if (!loadPass()) return   // 还没设密码：等用户设
-  if (!unlocked.value) return // 锁着：等输密码
+  if (!loggedIn.value) return
 
   loadMessages()
 
@@ -299,30 +305,30 @@ onMounted(async () => {
 
 <template>
   <div class="ai-app">
-    <!-- 口令锁屏 -->
-    <div v-if="!unlocked" class="ai-lock-screen">
-      <div class="ai-lock-card">
-        <span class="ai-lock-icon">{{ passMode === 'set' ? '🔐' : '🔑' }}</span>
-        <h1>AI 助手</h1>
-        <p v-if="passMode === 'set'">首次使用，请设置一个访问口令</p>
-        <p v-else>请输入口令进入</p>
-        
-        <form class="ai-lock-form" @submit.prevent="passMode === 'set' ? doSetPass() : doEnter()">
-          <input
-            v-model.trim="passInput"
-            type="password"
-            :placeholder="passMode === 'set' ? '设置口令' : '输入口令'"
-            autofocus
-            autocomplete="off"
-            @keydown.enter.prevent="passMode === 'set' ? doSetPass() : doEnter()"
-          />
-          <p v-if="passError" class="ai-lock-err">{{ passError }}</p>
-          <button type="submit" :disabled="!passInput">
-            {{ passMode === 'set' ? '设置并进入' : '进 入' }}
+    <!-- 登录界面 -->
+    <div v-if="!loggedIn" class="ai-login-screen">
+      <div class="ai-login-card">
+        <div class="ai-login-brand">
+          <span class="ai-login-logo">🤖</span>
+          <h1>AI 助手</h1>
+          <p>登录以使用 AI 对话</p>
+        </div>
+
+        <div class="login-tabs">
+          <button :class="{ active: loginTab === 'login' }" type="button" @click="loginTab = 'login'">登录</button>
+          <button :class="{ active: loginTab === 'register' }" type="button" @click="loginTab = 'register'">注册</button>
+        </div>
+
+        <form class="ai-login-form" @submit.prevent="loginTab === 'login' ? doLogin() : doRegister()">
+          <input v-model.trim="loginForm.username" type="text" placeholder="用户名" autofocus autocomplete="username" />
+          <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" />
+          <p v-if="loginError" class="ai-login-err">{{ loginError }}</p>
+          <button type="submit" :disabled="!loginForm.username || !loginForm.password">
+            {{ loginTab === 'register' ? '注 册' : '登 录' }}
           </button>
         </form>
-        
-        <p class="ai-lock-hint">记住这个口令，下次进入需要它。不对任何人透露。</p>
+
+        <p class="ai-login-hint">账号保存在本机浏览器，不与个人主页互通</p>
       </div>
     </div>
 
@@ -331,7 +337,7 @@ onMounted(async () => {
     <header class="ai-top">
       <span class="ai-logo">🤖 AI 助手</span>
       <div class="ai-top-right">
-        <button class="ai-btn ghost" type="button" @click="doLock">🔒 锁定</button>
+        <button class="ai-btn ghost" type="button" @click="doLogout">退出登录</button>
         <div class="ai-version">v{{ __APP_VERSION__ }}</div>
       </div>
     </header>
