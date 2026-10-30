@@ -1,0 +1,20 @@
+{
+  "name": "ai-standalone",
+  "version": "1.0.0",
+  "private": true,
+  "description": "独立 AI 助手 · 自定义模型 · 本地&云端多模型切换",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 5174"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.3",
+    "vite": "^5.4.21"
+  }
+}
