@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { checkHealth, chat as doChat } from './api/model'
-import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, LOCAL_PREFIX, isLocalId, isCustomId } from './api/models'
+import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
+import { MEETING_NOTES } from './data/meeting'
 
-// 状态
+// ====== 状态 ======
 const busy = ref(false)
 const input = ref('')
 const messages = ref([])
@@ -14,21 +15,93 @@ const cloudModels = ref([])
 const localModels = ref([])
 const currentModel = ref('')
 
-// 自定义模型管理弹窗
+const CHAT_KEY = 'ai_chat_model'
+const MEETING_KEY = 'ai_meeting_on'
+
+// 会议记录开关
+const meetingOn = ref(false)
+try {
+  meetingOn.value = localStorage.getItem(MEETING_KEY) === '1'
+} catch { /* ignore */ }
+
+// ====== 模型弹窗 ======
 const customOpen = ref(false)
-const customEditing = ref(null)  // null=添加模式，object=编辑模式
+const customEditing = ref(null)
 const customForm = ref({ label: '', endpoint: '', apiKey: '', modelId: '' })
 const customModels = ref([])
+const showApiKey = ref(false)
+const testingConn = ref(false)
+const testResult = ref('')
+const testResultOk = ref(false)
 
-const CHAT_KEY = 'ai_chat_model'
+// 预设模板
+const PRESETS = [
+  { label: 'DeepSeek', endpoint: 'https://api.deepseek.com', modelId: 'deepseek-chat', desc: 'DeepSeek V3 · 须有 API Key' },
+  { label: 'OpenAI', endpoint: 'https://api.openai.com', modelId: 'gpt-4o', desc: 'GPT-4o · 须有 API Key' },
+  { label: 'Ollama 本地', endpoint: 'http://127.0.0.1:11434', modelId: 'qwen2.5:0.5b', desc: 'Ollama 常驻本地 · 通常无需 API Key' },
+  { label: '通义千问（阿里云百炼）', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode', modelId: 'qwen-plus', desc: '阿里云大模型 · 须有百炼 API Key' },
+  { label: '智谱 ChatGLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4', modelId: 'glm-4-plus', desc: '智谱清言 · 须有 API Key' }
+]
 
+function applyPreset(preset) {
+  customForm.value = {
+    label: customForm.value.label || preset.desc,
+    endpoint: preset.endpoint,
+    apiKey: customForm.value.apiKey || '',
+    modelId: preset.modelId
+  }
+}
+
+async function testConnection() {
+  testingConn.value = true
+  testResult.value = ''
+  testResultOk.value = false
+  const ep = (customForm.value.endpoint || '').replace(/\/+$/, '') + '/v1/chat/completions'
+  const headers = { 'Content-Type': 'application/json' }
+  if (customForm.value.apiKey) headers.Authorization = 'Bearer ' + customForm.value.apiKey
+  const t0 = Date.now()
+  try {
+    const res = await fetch(ep, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: customForm.value.modelId || 'default',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 4
+      }),
+      signal: AbortSignal.timeout(15000)
+    })
+    const ms = Date.now() - t0
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && (data.choices || data.error === undefined)) {
+      testResult.value = `✅ 连接成功 · 延迟 ${ms}ms`
+      testResultOk.value = true
+    } else {
+      const detail = (data.error && (data.error.message || data.error.code)) || 'HTTP ' + res.status
+      testResult.value = `❌ 失败 · ${detail}`
+    }
+    // eslint-disable-next-line no-unused-vars
+  } catch (e) {
+    const ms = Date.now() - t0
+    testResult.value = `❌ 无响应 · 等待 ${ms}ms`
+  } finally {
+    testingConn.value = false
+  }
+}
+
+// ====== 自动换行展开 ======
+const textareaRef = ref(null)
+function autoResize() {
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+  })
+}
+
+// ====== 计算 ======
 const allModels = computed(() => listAllModels(cloudModels.value, localModels.value))
-
-const currentLabel = computed(() => {
-  const m = allModels.value.find((x) => x.id === currentModel.value)
-  if (m) return m.label
-  return '选择模型'
-})
 
 const currentProvider = computed(() => {
   const m = allModels.value.find((x) => x.id === currentModel.value)
@@ -37,7 +110,7 @@ const currentProvider = computed(() => {
 
 const canSend = computed(() => currentModel.value && input.value.trim() && !busy.value)
 
-// 消息列表滚动到最新
+// ====== 消息 ======
 const msgList = ref(null)
 function scrollBottom() {
   nextTick(() => {
@@ -46,17 +119,20 @@ function scrollBottom() {
   })
 }
 
-// 发消息
 async function send() {
   const text = input.value.trim()
   if (!text || !currentModel.value || busy.value) return
   error.value = ''
   busy.value = true
-  messages.value.push({ role: 'user', content: text })
+  const promptText = meetingOn.value
+    ? `【会议记录】${MEETING_NOTES}\n\n【用户提问】${text}`
+    : text
+  messages.value.push({ role: 'user', content: text }) // 聊天只显示用户原文
   input.value = ''
+  autoResize()
   scrollBottom()
   try {
-    const res = await doChat(text, { model: currentModel.value, history: recentHistory() })
+    const res = await doChat(promptText, { model: currentModel.value, history: recentHistory() })
     messages.value.push({ role: 'ai', content: res.answer, model: res.model })
   } catch (e) {
     error.value = e.message || String(e)
@@ -81,21 +157,31 @@ function onKeydown(e) {
   }
 }
 
-// 换模型
 function onChangeModel() {
   try { localStorage.setItem(CHAT_KEY, currentModel.value) } catch { /* ignore */ }
 }
 
-// 自定义模型弹窗
+function toggleMeeting() {
+  meetingOn.value = !meetingOn.value
+  try { localStorage.setItem(MEETING_KEY, meetingOn.value ? '1' : '0') } catch { /* ignore */ }
+}
+
+// ====== 模型管理 ======
 function openCustom() {
   customEditing.value = null
   customForm.value = { label: '', endpoint: '', apiKey: '', modelId: '' }
+  showApiKey.value = false
+  testResult.value = ''
+  testResultOk.value = false
   customOpen.value = true
 }
 
 function editCustom(model) {
   customEditing.value = model
   customForm.value = { label: model.label, endpoint: model.endpoint, apiKey: model.apiKey || '', modelId: model.modelId || '' }
+  showApiKey.value = false
+  testResult.value = ''
+  testResultOk.value = false
   customOpen.value = true
 }
 
@@ -107,7 +193,6 @@ function saveCustom() {
   } else {
     customModels.value = addCustomModel({ label: f.label, endpoint: f.endpoint, apiKey: f.apiKey, modelId: f.modelId })
   }
-  // 恢复下拉
   customOpen.value = false
 }
 
@@ -116,7 +201,7 @@ function delCustom(model) {
   if (currentModel.value === model.id) currentModel.value = ''
 }
 
-// 启动
+// ====== 启动 ======
 onMounted(async () => {
   const h = await checkHealth()
   online.value = h.online
@@ -125,7 +210,6 @@ onMounted(async () => {
   localModels.value = await listLocalModels()
   customModels.value = loadCustomModels()
 
-  // 上次选的模型
   let stored = ''
   try { stored = localStorage.getItem(CHAT_KEY) || '' } catch { /* ignore */ }
 
@@ -159,9 +243,27 @@ onMounted(async () => {
         </select>
         <span class="ai-provider">{{ currentProvider }}</span>
         <span class="ai-dot" :class="online ? 'on' : 'off'"></span>
-        <span class="ai-status">{{ online ? '在线' : '离线' }}</span>
       </div>
-      <button class="ai-btn ghost" type="button" @click="openCustom">⚙️ 管理自定义模型</button>
+
+      <div class="ai-bar-right">
+        <!-- 会议记录开关 -->
+        <button
+          class="ai-chiptoggle"
+          :class="{ active: meetingOn }"
+          type="button"
+          title="开启后每次提问自动带上腾讯会议记录作为上下文"
+          @click="toggleMeeting"
+        >
+          <span :class="meetingOn ? 'mt-on' : 'mt-off'">📋</span>
+          会议记录
+        </button>
+        <button class="ai-btn ghost" type="button" @click="openCustom">⚙️ 管理自定义模型</button>
+      </div>
+    </div>
+
+    <!-- 会议记录开启提示 -->
+    <div v-if="meetingOn" class="meeting-hint">
+      📋 已开启会议记录模式（腾讯会议号 553 398 774 · 2026-10-27/28）—— 每次提问都会带上课程会议内容作为参考上下文
     </div>
 
     <!-- 消息 -->
@@ -189,13 +291,15 @@ onMounted(async () => {
     <!-- 输入 -->
     <footer class="ai-foot">
       <textarea
+        ref="textareaRef"
         v-model="input"
         class="ai-input"
-        rows="2"
+        rows="1"
         maxlength="2000"
         placeholder="输入问题，Enter 发送，Shift+Enter 换行"
         :disabled="busy"
         @keydown="onKeydown"
+        @input="autoResize"
       ></textarea>
       <button class="ai-btn send" :disabled="!canSend" @click="send">发送</button>
     </footer>
@@ -209,31 +313,78 @@ onMounted(async () => {
         </header>
 
         <div class="cm-body">
+          <!-- 预设模板 -->
+          <div class="cm-presets">
+            <span class="cm-section-label">快速预设</span>
+            <div class="cm-preset-chips">
+              <button
+                v-for="p in PRESETS"
+                :key="p.label"
+                class="cm-preset"
+                type="button"
+                :title="p.desc"
+                @click="applyPreset(p)"
+              >
+                {{ p.label }}
+              </button>
+            </div>
+          </div>
+
           <label class="cm-field">
             <span>名称</span>
-            <input v-model="customForm.label" type="text" placeholder="如 本地 DeepSeek" maxlength="30" />
+            <input v-model="customForm.label" type="text" placeholder="如 我的 DeepSeek" maxlength="30" />
           </label>
           <label class="cm-field">
             <span>端点地址</span>
-            <input v-model="customForm.endpoint" type="text" placeholder="http://127.0.0.1:11434 或 https://api.openai.com" maxlength="200" />
+            <input v-model="customForm.endpoint" type="text" placeholder="https://api.deepseek.com" maxlength="200" />
           </label>
           <label class="cm-field">
-            <span>API Key（选填）</span>
-            <input v-model="customForm.apiKey" type="text" placeholder="sk-…" maxlength="120" />
+            <span>API Key</span>
+            <div class="cm-key-row">
+              <input
+                v-model="customForm.apiKey"
+                :type="showApiKey ? 'text' : 'password'"
+                placeholder="sk-…（选填）"
+                maxlength="120"
+              />
+              <button class="ai-btn ghost" type="button" @click="showApiKey = !showApiKey">
+                {{ showApiKey ? '隐藏' : '显示' }}
+              </button>
+            </div>
           </label>
           <label class="cm-field">
-            <span>模型 ID（选填）</span>
+            <span>模型 ID</span>
             <input v-model="customForm.modelId" type="text" placeholder="如 deepseek-chat，不填用 default" maxlength="40" />
           </label>
+
+          <!-- 测试连接 -->
+          <div class="cm-test">
+            <button
+              class="ai-btn"
+              type="button"
+              :disabled="testingConn || !customForm.endpoint"
+              @click="testConnection"
+            >
+              {{ testingConn ? '测试中…' : '🔌 检测连接' }}
+            </button>
+            <span v-if="testResult" class="cm-test-result" :class="testResultOk ? 'ok' : 'fail'">
+              {{ testResult }}
+            </span>
+          </div>
+
           <p class="cm-hint">
-            端点应与 OpenAI Chat Completions API 兼容（POST /v1/chat/completions）。
-            只要你的服务端实现了 `messages` + `choices[0].message.content` 返回，就能直接接入。
+            端点应与 OpenAI Chat Completions API 兼容（`POST /v1/chat/completions`）。
           </p>
         </div>
 
         <div class="cm-actions">
           <button class="ai-btn" type="button" @click="customOpen = false">取消</button>
-          <button class="ai-btn primary" type="button" :disabled="!customForm.label || !customForm.endpoint" @click="saveCustom">
+          <button
+            class="ai-btn primary"
+            type="button"
+            :disabled="!customForm.label || !customForm.endpoint"
+            @click="saveCustom"
+          >
             {{ customEditing ? '保存修改' : '添加' }}
           </button>
         </div>
