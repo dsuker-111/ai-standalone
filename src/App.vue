@@ -3,50 +3,56 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { checkHealth, chat as doChat } from './api/model'
 import { listCloudModels, listLocalModels, listAllModels, modelGroup, loadCustomModels, addCustomModel, editCustomModel, removeCustomModel, isLocalId, isCustomId } from './api/models'
 import { MEETING_NOTES } from './data/meeting'
+import { supabase, signIn, signUp, signOut, isLoggedIn, currentUserEmail } from './api/supabase'
 
-// ====== 登录 ======
-const USERS_KEY = 'ai_users'
-const SESSION_KEY = 'ai_session'
+// ====== Supabase 登录 ======
 const loggedIn = ref(false)
 const loginTab = ref('login')
-const loginForm = ref({ username: '', password: '' })
+const loginForm = ref({ email: '', password: '' })
 const loginError = ref('')
+const loginLoading = ref(false)
+const authEmail = ref('')
 
-function loadUsers() {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY) || '{}') } catch { return {} }
-}
-function saveUsers(u) {
-  try { localStorage.setItem(USERS_KEY, JSON.stringify(u)) } catch {}
-}
-
-function doLogin() {
-  loginError.value = ''
-  const { username, password } = loginForm.value
-  const users = loadUsers()
-  if (users[username.trim()] !== password) {
-    loginError.value = '用户名或密码错误'
-    return
+async function checkAuth() {
+  const ok = await isLoggedIn()
+  if (ok) {
+    loggedIn.value = true
+    authEmail.value = (await currentUserEmail()) || ''
   }
-  try { localStorage.setItem(SESSION_KEY, username.trim()) } catch {}
-  loggedIn.value = true
 }
 
-function doRegister() {
+async function doLogin() {
   loginError.value = ''
-  const { username, password } = loginForm.value
-  if (!username.trim() || !password) { loginError.value = '用户名和密码不能为空'; return }
-  const users = loadUsers()
-  if (users[username.trim()]) { loginError.value = '该用户名已存在'; return }
-  users[username.trim()] = password
-  saveUsers(users)
-  try { localStorage.setItem(SESSION_KEY, username.trim()) } catch {}
-  loggedIn.value = true
+  loginLoading.value = true
+  try {
+    await signIn(loginForm.value.email.trim(), loginForm.value.password)
+    await checkAuth()
+  } catch (e) {
+    loginError.value = (e && (e.message || e.code)) || '登录失败'
+  } finally {
+    loginLoading.value = false
+  }
 }
 
-function doLogout() {
-  try { localStorage.removeItem(SESSION_KEY) } catch {}
+async function doRegister() {
+  loginError.value = ''
+  loginLoading.value = true
+  try {
+    await signUp(loginForm.value.email.trim(), loginForm.value.password)
+    await checkAuth()
+  } catch (e) {
+    loginError.value = (e && (e.message || e.code)) || '注册失败'
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+async function doLogout() {
+  await signOut()
   loggedIn.value = false
-  loginForm.value = { username: '', password: '' }
+  authEmail.value = ''
+  loginForm.value = { email: '', password: '' }
+  messages.value = []
 }
 
 // ====== 状态 ======
@@ -274,15 +280,7 @@ function delCustom(model) {
 
 // ====== 启动 ======
 onMounted(async () => {
-  // 检查是否有上次登录的会话
-  try {
-    const sess = localStorage.getItem(SESSION_KEY)
-    if (sess) {
-      const users = loadUsers()
-      if (users[sess]) loggedIn.value = true
-    }
-  } catch {}
-
+  await checkAuth()
   if (!loggedIn.value) return
 
   loadMessages()
@@ -320,15 +318,15 @@ onMounted(async () => {
         </div>
 
         <form class="ai-login-form" @submit.prevent="loginTab === 'login' ? doLogin() : doRegister()">
-          <input v-model.trim="loginForm.username" type="text" placeholder="用户名" autofocus autocomplete="username" />
-          <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" />
+          <input v-model.trim="loginForm.email" type="email" placeholder="邮箱" autofocus autocomplete="email" />
+          <input v-model="loginForm.password" type="password" placeholder="密码（至少 6 位）" autocomplete="current-password" />
           <p v-if="loginError" class="ai-login-err">{{ loginError }}</p>
-          <button type="submit" :disabled="!loginForm.username || !loginForm.password">
-            {{ loginTab === 'register' ? '注 册' : '登 录' }}
+          <button type="submit" :disabled="!loginForm.email || loginForm.password.length < 6 || loginLoading">
+            {{ loginLoading ? '处理中…' : (loginTab === 'register' ? '注 册' : '登 录') }}
           </button>
         </form>
 
-        <p class="ai-login-hint">账号保存在本机浏览器，不与个人主页互通</p>
+        <p class="ai-login-hint">注册后可在任何电脑登录，对话记录同步到云端</p>
       </div>
     </div>
 
@@ -337,7 +335,8 @@ onMounted(async () => {
     <header class="ai-top">
       <span class="ai-logo">🤖 AI 助手</span>
       <div class="ai-top-right">
-        <button class="ai-btn ghost" type="button" @click="doLogout">退出登录</button>
+        <span class="ai-user-mail">{{ authEmail }}</span>
+        <button class="ai-btn ghost" type="button" @click="doLogout">退出</button>
         <div class="ai-version">v{{ __APP_VERSION__ }}</div>
       </div>
     </header>
