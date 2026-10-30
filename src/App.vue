@@ -17,6 +17,8 @@ const currentModel = ref('')
 
 const CHAT_KEY = 'ai_chat_model'
 const MEETING_KEY = 'ai_meeting_on'
+const MSGS_KEY = 'ai_chat_messages'
+const MAX_MSGS = 200  // 最多保留 200 条消息
 
 // 会议记录开关
 const meetingOn = ref(false)
@@ -140,6 +142,7 @@ async function send() {
   } finally {
     busy.value = false
     scrollBottom()
+    saveMessages()
   }
 }
 
@@ -164,6 +167,29 @@ function onChangeModel() {
 function toggleMeeting() {
   meetingOn.value = !meetingOn.value
   try { localStorage.setItem(MEETING_KEY, meetingOn.value ? '1' : '0') } catch { /* ignore */ }
+}
+
+// ====== 对话持久化 ======
+function saveMessages() {
+  try {
+    const payload = messages.value.slice(-MAX_MSGS)
+    localStorage.setItem(MSGS_KEY, JSON.stringify(payload))
+  } catch { /* ignore */ }
+}
+
+function loadMessages() {
+  try {
+    const raw = localStorage.getItem(MSGS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) messages.value = parsed
+    }
+  } catch { /* ignore */ }
+}
+
+function clearMessages() {
+  messages.value = []
+  try { localStorage.removeItem(MSGS_KEY) } catch { /* ignore */ }
 }
 
 // ====== 模型管理 ======
@@ -203,6 +229,8 @@ function delCustom(model) {
 
 // ====== 启动 ======
 onMounted(async () => {
+  loadMessages()
+
   const h = await checkHealth()
   online.value = h.online
 
@@ -268,6 +296,10 @@ onMounted(async () => {
 
     <!-- 消息 -->
     <main ref="msgList" class="ai-msgs">
+      <div v-if="messages.length" class="ai-msgs-header">
+        <span class="ai-msgs-count">{{ messages.length }} 条消息</span>
+        <button class="ai-btn ghost danger" type="button" @click="clearMessages">清空对话</button>
+      </div>
       <div v-if="!messages.length" class="ai-empty">
         <p>👋 选好模型，输入问题开始对话</p>
         <p class="ai-empty-sub">云端走阿里云百炼 · 本机走 TRAE 训练模型 · 也可加自定义 OpenAI 兼容端点</p>

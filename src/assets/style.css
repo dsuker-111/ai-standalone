@@ -185,6 +185,19 @@ html,body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:v
   opacity: .75;
 }
 
+/* 消息区顶部栏 */
+.ai-msgs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 6px 10px;
+}
+
+.ai-msgs-count {
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+
 .ai-msg {
   display: flex;
   flex-direction: column;
